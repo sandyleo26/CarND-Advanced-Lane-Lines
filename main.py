@@ -4,10 +4,6 @@ import matplotlib.image as mpimg
 import cv2
 import glob
 
-def calibrate(img):
-
-    return img
-
 def get_mtx_dist():
     objPoints = []
     imgPoints = []
@@ -27,13 +23,21 @@ def get_mtx_dist():
         imgPoints.append(corners)
 
     retval, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(objPoints, imgPoints, gray.shape[::-1], None, None)
-    # undist = cv2.undistort(img, mtx, dist)
-    # fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10,5))
-    # ax1.imshow(img)
-    # ax2.imshow(undist)
-    # plt.show()
-    # break
-
     return mtx, dist
 
-mtx, dist = get_mtx_dist()
+## Run once and save the cameraMatrix and distCoeffs
+# mtx, dist = get_mtx_dist()
+# np.savez('./calibration_data.npz', mtx=mtx, dist=dist)
+calibration_data = np.load('./calibration_data.npz')
+mtx, dist = calibration_data['mtx'], calibration_data['dist']
+
+## Test undistort
+# test_img = mpimg.imread('./camera_cal/calibration1.jpg')
+# undist = cv2.undistort(test_img, mtx, dist)
+# fig, axes = plt.subplots(1,2,figsize=(10,5))
+# axes[0].imshow(test_img)
+# axes[1].imshow(undist)
+# plt.show()
+
+
+
