@@ -26,62 +26,82 @@ def get_mtx_dist():
         imgPoints.append(corners)
 
     retval, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(objPoints, imgPoints, gray.shape[::-1], None, None)
+    ## Run once and save the cameraMatrix and distCoeffs
+    # np.savez('./calibration_data.npz', mtx=mtx, dist=dist)
+
     return mtx, dist
 
-## Run once and save the cameraMatrix and distCoeffs
-# mtx, dist = get_mtx_dist()
-# np.savez('./calibration_data.npz', mtx=mtx, dist=dist)
+def sobel_threshold(img, thresh=(30, 100), direction='x', kernel_size=5):
+    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+    kernel_size = 5
+    sobel = None
+    if direction=='x':
+        sobel = cv2.Sobel(gray, cv2.CV_64F, 1, 0, kernel_size)
+    else:
+        sobel = cv2.Sobel(gray, cv2.CV_64F, 0, 1, kernel_size)
+
+    absolute_sobel = np.absolute(sobel)
+    scaled_sobel = 255*absolute_sobel/np.max(absolute_sobel)
+    sobel_binary = np.zeros_like(gray)
+    sobel_binary[(scaled_sobel > thresh[0]) & (scaled_sobel < thresh[1])] = 1
+    return sobol_binary
+
+def color_threshold(img, thresh=(30, 100)):
+    hls = cv2.cvtColor(img, cv2.COLOR_RGB2HLS)
+    schannel = hls[:,:,2]
+    schannel_binary = np.zeros_like(schannel)
+    thresh = (30,100)
+    schannel_binary[(schannel > thresh[0]) & (schannel < thresh[1])] = 1
+
+    ## Test sobel threshold and color threshold
+    # fig, axes = plt.subplots(1,2,figsize=(10,6))
+    # axes[0].imshow(schannel, cmap='gray')
+    # axes[1].imshow(schannel_binary, cmap='gray')
+    # plt.show()
+    return schannel_binary
+
+## find 4 points for perspective transform
+def retrieve_points_for_warping():
+
+    def onclick(event):
+        print('button=%d, x=%d, y=%d, xdata=%f, ydata=%f' %
+              (event.button, event.x, event.y, event.xdata, event.ydata))
+
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+    cid = fig.canvas.mpl_connect('button_press_event', onclick)
+    ax.imshow(img)
+    ax.grid(True)
+    plt.show()
+
+## perspective transform
+def perspective_transform(img):
+    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+    src = np.array([(302,650), (1002,652), (765,502), (525,503)], np.float32)
+    dst = np.array([(302,650), (1002,650), (1002,502), (302,502)], np.float32)
+    M = cv2.getPerspectiveTransform(src, dst)
+    warped = cv2.warpPerspective(gray, M, gray.shape[::-1], cv2.INTER_LINEAR)
+
+    ## Test perspective transform
+    # fig, axes = plt.subplots(1,2,figsize=(10,6))
+    # axes[0].imshow(gray)
+    # axes[1].imshow(warped)
+    # plt.show()
+    return warped
+
+## Test images
+calibration_img = mpimg.imread('./camera_cal/calibration1.jpg')
+straight_lines1_img = mpimg.imread('./test_images/straight_lines1.jpg')
 
 calibration_data = np.load('./calibration_data.npz')
 mtx, dist = calibration_data['mtx'], calibration_data['dist']
 
 ## Test undistort
-# test_img = mpimg.imread('./camera_cal/calibration1.jpg')
-# undist = cv2.undistort(test_img, mtx, dist)
+# undist = cv2.undistort(img, mtx, dist)
 # fig, axes = plt.subplots(1,2,figsize=(10,5))
-# axes[0].imshow(test_img)
+# axes[0].imshow(calibration_img)
 # axes[1].imshow(undist)
 # plt.show()
 
 
-img = mpimg.imread('./test_images/straight_lines1.jpg')
-gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-kernel_size = 5
-sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, kernel_size)
-absolute_sobelx = np.absolute(sobelx)
-scaled_sobelx = 255*absolute_sobelx/np.max(absolute_sobelx)
-sobelx_binary = np.zeros_like(gray)
-sobelx_thresh = (30, 100)
-sobelx_binary[(scaled_sobelx > sobelx_thresh[0]) & (scaled_sobelx < sobelx_thresh[1])] = 1
 
-hls = cv2.cvtColor(img, cv2.COLOR_RGB2HLS)
-schannel = hls[:,:,2]
-schannel_binary = np.zeros_like(schannel)
-thresh = (30,100)
-schannel_binary[(schannel > thresh[0]) & (schannel < thresh[1])] = 1
-
-# fig, axes = plt.subplots(1,2,figsize=(10,6))
-# axes[0].imshow(sobelx_binary, cmap='gray')
-# axes[1].imshow(schannel_binary, cmap='gray')
-# plt.show()
-
-## find 4 points for perspective transform
-def onclick(event):
-    print('button=%d, x=%d, y=%d, xdata=%f, ydata=%f' %
-          (event.button, event.x, event.y, event.xdata, event.ydata))
-
-# fig = plt.figure()
-# ax = fig.add_subplot(111)
-# cid = fig.canvas.mpl_connect('button_press_event', onclick)
-# ax.imshow(img)
-# ax.grid(True)
-# plt.show()
-
-src = np.array([(302,650), (1002,652), (765,502), (525,503)], np.float32)
-dst = np.array([(302,650), (1002,650), (1002,502), (302,502)], np.float32)
-M = cv2.getPerspectiveTransform(src, dst)
-warped = cv2.warpPerspective(img, M, img.shape[0:2][::-1], cv2.INTER_LINEAR)
-fig, axes = plt.subplots(1,2,figsize=(10,6))
-axes[0].imshow(img)
-axes[1].imshow(warped)
-plt.show()
