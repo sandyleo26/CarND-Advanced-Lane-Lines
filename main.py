@@ -60,7 +60,28 @@ schannel_binary = np.zeros_like(schannel)
 thresh = (30,100)
 schannel_binary[(schannel > thresh[0]) & (schannel < thresh[1])] = 1
 
+# fig, axes = plt.subplots(1,2,figsize=(10,6))
+# axes[0].imshow(sobelx_binary, cmap='gray')
+# axes[1].imshow(schannel_binary, cmap='gray')
+# plt.show()
+
+## find 4 points for perspective transform
+def onclick(event):
+    print('button=%d, x=%d, y=%d, xdata=%f, ydata=%f' %
+          (event.button, event.x, event.y, event.xdata, event.ydata))
+
+# fig = plt.figure()
+# ax = fig.add_subplot(111)
+# cid = fig.canvas.mpl_connect('button_press_event', onclick)
+# ax.imshow(img)
+# ax.grid(True)
+# plt.show()
+
+src = np.array([(302,650), (1002,652), (765,502), (525,503)], np.float32)
+dst = np.array([(302,650), (1002,650), (1002,502), (302,502)], np.float32)
+M = cv2.getPerspectiveTransform(src, dst)
+warped = cv2.warpPerspective(img, M, img.shape[0:2][::-1], cv2.INTER_LINEAR)
 fig, axes = plt.subplots(1,2,figsize=(10,6))
-axes[0].imshow(sobelx_binary, cmap='gray')
-axes[1].imshow(schannel_binary, cmap='gray')
+axes[0].imshow(img)
+axes[1].imshow(warped)
 plt.show()
