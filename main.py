@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 import cv2
 import glob
+from moviepy.editor import VideoFileClip
 
 def get_mtx_dist():
     '''
@@ -31,37 +32,61 @@ def get_mtx_dist():
 
     return mtx, dist
 
-def sobel_threshold(img, thresh=(30, 100), direction='x', kernel_size=5):
-    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-    kernel_size = 5
-    sobel = None
-    if direction=='x':
-        sobel = cv2.Sobel(gray, cv2.CV_64F, 1, 0, kernel_size)
-    else:
-        sobel = cv2.Sobel(gray, cv2.CV_64F, 0, 1, kernel_size)
+def abs_sobel_thresh(gray, orient='x', sobel_kernel=3, thresh=(20, 100)):
+    sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0) # Take the derivative in x
+    abs_sobelx = np.absolute(sobelx) # Absolute x derivative to accentuate lines away from horizontal
+    scaled_sobel = np.uint8(255*abs_sobelx/np.max(abs_sobelx))
+    grad_binary = np.zeros_like(gray)
+    grad_binary[(scaled_sobel > thresh[0]) & (scaled_sobel < thresh[1])] = 1
+    return grad_binary
 
-    absolute_sobel = np.absolute(sobel)
-    scaled_sobel = 255*absolute_sobel/np.max(absolute_sobel)
-    sobel_binary = np.zeros_like(gray)
-    sobel_binary[(scaled_sobel > thresh[0]) & (scaled_sobel < thresh[1])] = 1
-    return sobel_binary
+def mag_thresh(gray, sobel_kernel=9, mag_thresh=(30, 100)):
+    # Take both Sobel x and y gradients
+    sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=sobel_kernel)
+    sobely = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=sobel_kernel)
+    # Calculate the gradient magnitude
+    gradmag = np.sqrt(sobelx**2 + sobely**2)
+    # Rescale to 8 bit
+    scale_factor = np.max(gradmag)/255 
+    gradmag = (gradmag/scale_factor).astype(np.uint8) 
+    # Create a binary image of ones where threshold is met, zeros otherwise
+    mag_binary = np.zeros_like(gradmag)
+    mag_binary[(gradmag >= mag_thresh[0]) & (gradmag <= mag_thresh[1])] = 1
+    return mag_binary
 
-def color_threshold(img, thresh=(30, 100)):
+def dir_threshold(gray, sobel_kernel=15, thresh=(0.7, 1.3)):
+    sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, gray, sobel_kernel)
+    sobely = cv2.Sobel(gray, cv2.CV_64F, 0, 1, gray, sobel_kernel)
+    # 3) Take the absolute value of the x and y gradients
+    abs_sobelx = np.absolute(sobelx)
+    abs_sobely = np.absolute(sobely)
+    # 4) Use np.arctan2(abs_sobely, abs_sobelx) to calculate the direction of the gradient 
+    direction = np.arctan2(abs_sobely, abs_sobelx)
+    # 5) Create a binary mask where direction thresholds are met
+    dir_output = np.zeros_like(gray)
+    dir_output[(direction >= thresh[0]) & (direction <= thresh[1])] = 1
+    return dir_output
+
+def color_threshold(img, thresh=(170, 255)):
     hls = cv2.cvtColor(img, cv2.COLOR_RGB2HLS)
+    rchannel = img[:,:,0]
+    rchannel_binary = np.zeros_like(rchannel)
+    rchannel_binary[(rchannel > thresh[0]) & (rchannel < thresh[1])] = 1
     schannel = hls[:,:,2]
     schannel_binary = np.zeros_like(schannel)
-    thresh = (30,100)
     schannel_binary[(schannel > thresh[0]) & (schannel < thresh[1])] = 1
+    combined_binary = np.zeros_like(rchannel)
+    combined_binary[(rchannel > 200) & (rchannel < 255)] = 1
 
     ## Test sobel threshold and color threshold
     # fig, axes = plt.subplots(1,2,figsize=(10,6))
     # axes[0].imshow(schannel, cmap='gray')
     # axes[1].imshow(schannel_binary, cmap='gray')
     # plt.show()
-    return schannel_binary
+    return combined_binary
 
 ## find 4 points for perspective transform
-def retrieve_points_for_warping():
+def retrieve_points_for_warping(img):
     def onclick(event):
         print('button=%d, x=%d, y=%d, xdata=%f, ydata=%f' %
               (event.button, event.x, event.y, event.xdata, event.ydata))
@@ -78,8 +103,6 @@ def perspective_transform(img):
     gray = img
     if len(gray.shape) == 3:
         gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-    src = np.array([(302,650), (1002,652), (765,502), (525,503)], np.float32)
-    dst = np.array([(302,650), (1002,650), (1002,502), (302,502)], np.float32)
     M = cv2.getPerspectiveTransform(src, dst)
     warped = cv2.warpPerspective(gray, M, gray.shape[::-1], cv2.INTER_LINEAR)
 
@@ -151,6 +174,9 @@ def find_lane_line_sliding_windows(img):
     lefty = nonzeroy[left_lane_inds] 
     rightx = nonzerox[right_lane_inds]
     righty = nonzeroy[right_lane_inds] 
+    new_fit_found = True
+    if len(lefty) == 0 or len(righty) == 0:
+        return False, np.array([]), np.array([])
     # Fit a second order polynomial to each
     left_fit = np.polyfit(lefty, leftx, 2)
     right_fit = np.polyfit(righty, rightx, 2)
@@ -169,7 +195,7 @@ def find_lane_line_sliding_windows(img):
     # #plt.ylim(720, 0)
     # plt.show()
 
-    return left_fit, right_fit
+    return new_fit_found, left_fit, right_fit
 
 ## find lane lines using polyfit parameters returned from previous blind search (e.g. sliding windows)
 def find_lane_line(img, left_fit, right_fit):
@@ -188,14 +214,24 @@ def find_lane_line(img, left_fit, right_fit):
     lefty = nonzeroy[left_lane_inds] 
     rightx = nonzerox[right_lane_inds]
     righty = nonzeroy[right_lane_inds]
-    # Fit a second order polynomial to each
-    left_fit = np.polyfit(lefty, leftx, 2)
-    right_fit = np.polyfit(righty, rightx, 2)
+    new_fit_found = True
+    if len(leftx) == 0 or len(rightx) == 0:
+        new_fit_found = False
+        new_left_fit = left_fit
+        new_right_fit = right_fit
+    else:
+        # Fit a second order polynomial to each
+        new_left_fit = np.polyfit(lefty, leftx, 2)
+        new_right_fit = np.polyfit(righty, rightx, 2)
+
     # Generate x and y values for plotting
     ploty = np.linspace(0, gray.shape[0]-1, gray.shape[0] )
-    left_fitx = left_fit[0]*ploty**2 + left_fit[1]*ploty + left_fit[2]
-    right_fitx = right_fit[0]*ploty**2 + right_fit[1]*ploty + right_fit[2]
-    # Create an image to draw on and an image to show the selection window
+    left_fitx = new_left_fit[0]*ploty**2 + new_left_fit[1]*ploty + new_left_fit[2]
+    right_fitx = new_right_fit[0]*ploty**2 + new_right_fit[1]*ploty + new_right_fit[2]
+    vehicley = ploty[-1]
+    vehicelx = (left_fitx[-1] + right_fitx[-1]) // 2
+
+    ## Create an image to draw on and an image to show the selection window
     out_img = np.dstack((gray, gray, gray))*255
     window_img = np.zeros_like(out_img)
     # Color in left and right line pixels
@@ -212,14 +248,18 @@ def find_lane_line(img, left_fit, right_fit):
     cv2.fillPoly(window_img, np.int_([left_line_pts]), (0,255, 0))
     cv2.fillPoly(window_img, np.int_([right_line_pts]), (0,255, 0))
     result = cv2.addWeighted(out_img, 1, window_img, 0.3, 0)
-    plt.imshow(result)
-    plt.plot(left_fitx, ploty, color='yellow')
-    plt.plot(right_fitx, ploty, color='yellow')
-    plt.xlim(0, 1280)
-    plt.ylim(720, 0)
-    plt.show()
+    # plt.imshow(result)
+    # plt.plot(left_fitx, ploty, color='yellow')
+    # plt.plot(right_fitx, ploty, color='yellow')
+    # plt.xlim(0, 1280)
+    # plt.ylim(720, 0)
+    # plt.show()
+    return new_fit_found, new_left_fit, new_right_fit, left_fitx, right_fitx, ploty
 
-def radius_of_curvature():
+## calculate radius and center offset
+def curvature_and_offset(img, leftx, rightx, ploty):
+    if len(leftx) == 0 or len(rightx) == 0:
+        return -1, -1, -1
     # I'll choose the maximum y-value, corresponding to the bottom of the image
     y_eval = np.max(ploty)
     # Define conversions in x and y from pixels space to meters
@@ -232,9 +272,112 @@ def radius_of_curvature():
     # Calculate the new radii of curvature
     left_curverad = ((1 + (2*left_fit_cr[0]*y_eval*ym_per_pix + left_fit_cr[1])**2)**1.5) / np.absolute(2*left_fit_cr[0])
     right_curverad = ((1 + (2*right_fit_cr[0]*y_eval*ym_per_pix + right_fit_cr[1])**2)**1.5) / np.absolute(2*right_fit_cr[0])
-    # Now our radius of curvature is in meters
-    print(left_curverad, 'm', right_curverad, 'm')
-    # Example values: 632.1 m    626.2 m
+
+    lane_center_offset = (rightx[-1] + leftx[-1] - img.shape[1]//2)//2 * xm_per_pix
+    return left_curverad, right_curverad, lane_center_offset
+
+## unwarp birdeye view to normal view
+def unwarp(undist, left_fitx, right_fitx, ploty):
+    # Create an image to draw the lines on
+    warp_zero = np.zeros_like(undist[:,:,2]).astype(np.uint8)
+    color_warp = np.dstack((warp_zero, warp_zero, warp_zero))
+
+    if len(left_fitx) != 0 and len(right_fitx) != 0:
+        # Recast the x and y points into usable format for cv2.fillPoly()
+        pts_left = np.array([np.transpose(np.vstack([left_fitx, ploty]))])
+        pts_right = np.array([np.flipud(np.transpose(np.vstack([right_fitx, ploty])))])
+        pts = np.hstack((pts_left, pts_right))
+        # Draw the lane onto the warped blank image
+        cv2.fillPoly(color_warp, np.int_([pts]), (0,255, 0))
+        Minverse = cv2.getPerspectiveTransform(dst, src)
+        # Warp the blank back to original image space using inverse perspective matrix (Minv)
+        newwarp = cv2.warpPerspective(color_warp, Minverse, (undist.shape[1], undist.shape[0])) 
+
+    # Combine the result with the original image
+    result = cv2.addWeighted(undist, 1, newwarp, 0.3, 0)
+    # plt.imshow(result)
+    # plt.show()
+    return result, color_warp
+
+def process_image(img):
+    undist = cv2.undistort(img, mtx, dist)
+    gray = cv2.cvtColor(undist, cv2.COLOR_RGB2GRAY)
+    gradx = abs_sobel_thresh(gray)
+    mag_binary = mag_thresh(gray)
+    dir_binary = dir_threshold(gray)
+    sobel_combined = np.zeros_like(gray)
+    sobel_combined[((mag_binary == 1) & (dir_binary == 1)) | ((gradx == 1))] = 1
+    
+    color_binary = color_threshold(undist)
+    # combined = sobel_combined | color_binary
+    combined = color_binary
+    warped = perspective_transform(combined)
+
+    left_fitx, right_fitx = None, None
+    if line.detected:
+        new_fit_found, new_left_fit, new_right_fit, left_fitx, right_fitx, ploty = find_lane_line(
+                warped, line.current_fit[0], line.current_fit[1])
+        if not new_fit_found:
+            line.debugOut = True
+            line.detected = False
+            print('find_lane_line found cannot polyfit. Check debug/{}.jpg'.format(line.debugCount))
+        else:
+            line.current_fit = [new_left_fit, new_right_fit]
+    else:
+        new_fit_found, left_fit, right_fit = find_lane_line_sliding_windows(warped)
+        if new_fit_found:
+            new_fit_found, new_left_fit, new_right_fit, left_fitx, right_fitx, ploty = find_lane_line(
+                    warped, left_fit, right_fit)
+            assert(new_fit_found)
+            line.detected = True
+            line.current_fit = [new_left_fit, new_right_fit]
+        else:
+            line.debugOut = True
+            print('find_lane_line_sliding_windows cannot polyfit. Check debug/{}.jpg'.format(line.debugCount))
+
+    unwarped, color_warp = unwarp(undist, left_fitx, right_fitx, ploty)
+    left_radius, right_radius, center_offset = curvature_and_offset(unwarped, left_fitx, right_fitx, ploty)
+
+    # sanity check left&right radius
+    absolute_diff = abs(left_radius-right_radius)
+    if absolute_diff > .2*abs(left_radius) or absolute_diff > .2*abs(right_radius):
+        line.debugOut = True
+        print('Sanity check failed for left and right radius. Use {}.jpg to debug'.format(line.debugCount))
+        print(left_radius, 'm', right_radius, 'm', center_offset, 'm')
+
+    cv2.putText(unwarped, 'Radius of Curvature = {}(m)'.format((left_radius+right_radius)//2), (50,100),
+            cv2.FONT_HERSHEY_SIMPLEX, fontScale=2, color=(255,255,255), thickness=2, lineType=cv2.LINE_AA)
+    cv2.putText(unwarped, 'Vehicle is {:.2f}m off center'.format(center_offset), (50,160),
+            cv2.FONT_HERSHEY_SIMPLEX, fontScale=2, color=(255,255,255), thickness=2, lineType=cv2.LINE_AA)
+    if line.debugOut:
+        line.debugOut = False
+        fig, axes = plt.subplots(3,4, figsize=(24,15))
+        fig.tight_layout()
+        images = [img, unwarped, gray, gradx, mag_binary, dir_binary, sobel_combined, color_binary, combined, warped, color_warp]
+        titles = ['Original', 'Unwarped', 'Gray', 'Abs Sobel', 'Mag Sobel', 'Dir Sobel', 'Sobel Combined', 'Color Binary', 'Combined Binary', 'Warped', 'Color Warp']
+        for i, image in enumerate(images):
+            if i == 0 or i == 1:
+                fig.axes[i].imshow(image)
+            else:
+                fig.axes[i].imshow(image, cmap='gray')
+            fig.axes[i].set_title(titles[i])
+        # axes[0,0].imshow(img)
+        # axes[0,0].set_title('Original')
+        # axes[0,1].imshow(unwarped)
+        # axes[0,1].set_title('Unwarped')
+        # axes[0,2].imshow(sobel_binary)
+        # axes[0,2].set_title('Sobel Binary')
+        # axes[1,0].imshow(color_binary)
+        # axes[1,0].set_title('Color Binary')
+        # axes[1,1].imshow(binary_img)
+        # axes[1,1].set_title('Combined Binary')
+        # axes[1,2].imshow(warped)
+        # axes[1,2].set_title('Warped')
+        plt.savefig('debug/{}.jpg'.format(line.debugCount))
+        cv2.imwrite('debug/original{}.jpg'.format(line.debugCount), img)
+        line.debugCount += 1
+
+    return unwarped
 
 # Define a class to receive the characteristics of each line detection
 class Line():
@@ -248,7 +391,7 @@ class Line():
         #polynomial coefficients averaged over the last n iterations
         self.best_fit = None  
         #polynomial coefficients for the most recent fit
-        self.current_fit = [np.array([False])]  
+        self.current_fit = None
         #radius of curvature of the line in some units
         self.radius_of_curvature = None 
         #distance in meters of vehicle center from the line
@@ -259,28 +402,30 @@ class Line():
         self.allx = None  
         #y values for detected line pixels
         self.ally = None
-    
-## load calibration data
+        # debug image count
+        self.debugOut = False
+        self.debugCount = 0
+
+# manually selected points for warping
+# src = np.array([(460,551), (836,551), (760,502), (530,502)], np.float32)
+# dst = np.array([(380,450), (1000,450), (1000,350), (380,350)], np.float32)
+src = np.array([(324,652), (1015,652), (708,460), (585,460)], np.float32)
+dst = np.array([(380,650), (1000,650), (1000,350), (380,350)], np.float32)
+# load calibration data
 calibration_data = np.load('./calibration_data.npz')
 mtx, dist = calibration_data['mtx'], calibration_data['dist']
-## Test images
+# Test images
 calibration_img = mpimg.imread('./camera_cal/calibration1.jpg')
-img = mpimg.imread('./test_images/straight_lines1.jpg')
-img = cv2.undistort(img, mtx, dist)
+img = mpimg.imread('./test_images/straight_lines2.jpg')
 
-## Test undistort
-# undist = cv2.undistort(img, mtx, dist)
-# fig, axes = plt.subplots(1,2,figsize=(10,5))
-# axes[0].imshow(calibration_img)
-# axes[1].imshow(undist)
-# plt.show()
-
-sobel_binary = sobel_threshold(img)
-color_binary = color_threshold(img)
-binary_img = sobel_binary & color_binary
-warped = perspective_transform(binary_img)
-# cv2.imwrite('test1.jpg', warped)
-
-left_fit, right_fit = find_lane_line_sliding_windows(warped)
-find_lane_line(warped, left_fit, right_fit)
-
+## process video
+video_in = 'project_video.mp4'
+# video_in = 'challenge_video.mp4'
+# video_in = 'harder_challenge_video.mp4'
+video_out = video_in.split('.')[0] + '_processed.' + video_in.split('.')[1]
+clip = VideoFileClip(video_in).subclip(23,25)
+line = Line()
+clip_processed = clip.fl_image(process_image)
+clip_processed.write_videofile(video_out, audio=False)
+# retrieve_points_for_warping(img)
+# process_image(img)
