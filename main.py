@@ -32,7 +32,7 @@ def get_mtx_dist():
 
     return mtx, dist
 
-def abs_sobel_thresh(gray, orient='x', sobel_kernel=3, thresh=(20, 100)):
+def abs_sobel_thresh(gray, orient='x', sobel_kernel=9, thresh=(30, 100)):
     sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0) # Take the derivative in x
     abs_sobelx = np.absolute(sobelx) # Absolute x derivative to accentuate lines away from horizontal
     scaled_sobel = np.uint8(255*abs_sobelx/np.max(abs_sobelx))
@@ -68,15 +68,24 @@ def dir_threshold(gray, sobel_kernel=15, thresh=(0.7, 1.3)):
     return dir_output
 
 def color_threshold(img, thresh=(170, 255)):
-    hls = cv2.cvtColor(img, cv2.COLOR_RGB2HLS)
-    rchannel = img[:,:,0]
-    rchannel_binary = np.zeros_like(rchannel)
-    rchannel_binary[(rchannel > thresh[0]) & (rchannel < thresh[1])] = 1
-    schannel = hls[:,:,2]
-    schannel_binary = np.zeros_like(schannel)
-    schannel_binary[(schannel > thresh[0]) & (schannel < thresh[1])] = 1
-    combined_binary = np.zeros_like(rchannel)
-    combined_binary[(rchannel > 200) & (rchannel < 255)] = 1
+    # hls = cv2.cvtColor(img, cv2.COLOR_RGB2HLS)
+    # rchannel = img[:,:,0]
+    # rchannel_binary = np.zeros_like(rchannel)
+    # rchannel_binary[(rchannel > thresh[0]) & (rchannel < thresh[1])] = 1
+    # schannel = hls[:,:,2]
+    # schannel_binary = np.zeros_like(schannel)
+    # schannel_binary[(schannel > thresh[0]) & (schannel < thresh[1])] = 1
+    # combined_binary = np.zeros_like(rchannel)
+    # combined_binary[(rchannel > 200) & (rchannel < 255)] = 1
+    lower_yellow_hsv = (20, 100, 100)
+    upper_yellow_hsv = (40, 255, 255)
+    lower_white_rgb = (200, 200, 200)
+    upper_white_rgb = (255, 255, 255)
+    hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
+    yellow = cv2.inRange(hsv, lower_yellow_hsv, upper_yellow_hsv)
+    white = cv2.inRange(img, lower_white_rgb, upper_white_rgb)
+    combined_binary = cv2.bitwise_or(yellow, white)//255
+
 
     ## Test sobel threshold and color threshold
     # fig, axes = plt.subplots(1,2,figsize=(10,6))
@@ -101,10 +110,8 @@ def retrieve_points_for_warping(img):
 ## perspective transform
 def perspective_transform(img):
     gray = img
-    if len(gray.shape) == 3:
-        gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
     M = cv2.getPerspectiveTransform(src, dst)
-    warped = cv2.warpPerspective(gray, M, gray.shape[::-1], cv2.INTER_LINEAR)
+    warped = cv2.warpPerspective(gray, M, gray.shape[0:2][::-1], cv2.INTER_LINEAR)
 
     ## Test perspective transform
     # fig, axes = plt.subplots(1,2,figsize=(10,6))
@@ -264,7 +271,7 @@ def curvature_and_offset(img, leftx, rightx, ploty):
     y_eval = np.max(ploty)
     # Define conversions in x and y from pixels space to meters
     ym_per_pix = 30/720 # meters per pixel in y dimension
-    xm_per_pix = 3.7/700 # meters per pixel in x dimension
+    xm_per_pix = 3.7/590 # meters per pixel in x dimension
 
     # Fit new polynomials to x,y in world space
     left_fit_cr = np.polyfit(ploty*ym_per_pix, leftx*xm_per_pix, 2)
@@ -282,6 +289,7 @@ def unwarp(undist, left_fitx, right_fitx, ploty):
     warp_zero = np.zeros_like(undist[:,:,2]).astype(np.uint8)
     color_warp = np.dstack((warp_zero, warp_zero, warp_zero))
 
+    newwarp = color_warp
     if len(left_fitx) != 0 and len(right_fitx) != 0:
         # Recast the x and y points into usable format for cv2.fillPoly()
         pts_left = np.array([np.transpose(np.vstack([left_fitx, ploty]))])
@@ -305,17 +313,16 @@ def process_image(img):
     gradx = abs_sobel_thresh(gray)
     mag_binary = mag_thresh(gray)
     dir_binary = dir_threshold(gray)
-    sobel_combined = np.zeros_like(gray)
-    sobel_combined[((mag_binary == 1) & (dir_binary == 1)) | ((gradx == 1))] = 1
+    sobel_combined = dir_binary & mag_binary
     
     color_binary = color_threshold(undist)
-    # combined = sobel_combined | color_binary
-    combined = color_binary
+    combined = color_binary | sobel_combined
     warped = perspective_transform(combined)
+    original_warped = perspective_transform(undist)
 
-    left_fitx, right_fitx = None, None
+    left_fitx, right_fitx, ploty = np.array([]), np.array([]), np.linspace(0, gray.shape[0]-1, gray.shape[0] )
     if line.detected:
-        new_fit_found, new_left_fit, new_right_fit, left_fitx, right_fitx, ploty = find_lane_line(
+        new_fit_found, new_left_fit, new_right_fit, left_fitx, right_fitx, _ = find_lane_line(
                 warped, line.current_fit[0], line.current_fit[1])
         if not new_fit_found:
             line.debugOut = True
@@ -326,7 +333,7 @@ def process_image(img):
     else:
         new_fit_found, left_fit, right_fit = find_lane_line_sliding_windows(warped)
         if new_fit_found:
-            new_fit_found, new_left_fit, new_right_fit, left_fitx, right_fitx, ploty = find_lane_line(
+            new_fit_found, new_left_fit, new_right_fit, left_fitx, right_fitx, _ = find_lane_line(
                     warped, left_fit, right_fit)
             assert(new_fit_found)
             line.detected = True
@@ -340,7 +347,7 @@ def process_image(img):
 
     # sanity check left&right radius
     absolute_diff = abs(left_radius-right_radius)
-    if absolute_diff > .2*abs(left_radius) or absolute_diff > .2*abs(right_radius):
+    if enableDebug and (absolute_diff > .2*abs(left_radius) or absolute_diff > .2*abs(right_radius)):
         line.debugOut = True
         print('Sanity check failed for left and right radius. Use {}.jpg to debug'.format(line.debugCount))
         print(left_radius, 'm', right_radius, 'm', center_offset, 'm')
@@ -349,12 +356,12 @@ def process_image(img):
             cv2.FONT_HERSHEY_SIMPLEX, fontScale=2, color=(255,255,255), thickness=2, lineType=cv2.LINE_AA)
     cv2.putText(unwarped, 'Vehicle is {:.2f}m off center'.format(center_offset), (50,160),
             cv2.FONT_HERSHEY_SIMPLEX, fontScale=2, color=(255,255,255), thickness=2, lineType=cv2.LINE_AA)
-    if line.debugOut:
+    if enableDebug and line.debugOut:
         line.debugOut = False
         fig, axes = plt.subplots(3,4, figsize=(24,15))
         fig.tight_layout()
-        images = [img, unwarped, gray, gradx, mag_binary, dir_binary, sobel_combined, color_binary, combined, warped, color_warp]
-        titles = ['Original', 'Unwarped', 'Gray', 'Abs Sobel', 'Mag Sobel', 'Dir Sobel', 'Sobel Combined', 'Color Binary', 'Combined Binary', 'Warped', 'Color Warp']
+        images = [img, unwarped, gray, gradx, mag_binary, dir_binary, sobel_combined, color_binary, combined, warped, color_warp, original_warped]
+        titles = ['img', 'unwarped', 'gray', 'gradx', 'mag_binary', 'dir_binary', 'sobel_combined', 'color_binary', 'combined', 'warped', 'color_warp', 'original_warped']
         for i, image in enumerate(images):
             if i == 0 or i == 1:
                 fig.axes[i].imshow(image)
@@ -406,24 +413,24 @@ class Line():
         self.debugOut = False
         self.debugCount = 0
 
-# manually selected points for warping
-# src = np.array([(460,551), (836,551), (760,502), (530,502)], np.float32)
-# dst = np.array([(380,450), (1000,450), (1000,350), (380,350)], np.float32)
-src = np.array([(324,652), (1015,652), (708,460), (585,460)], np.float32)
-dst = np.array([(380,650), (1000,650), (1000,350), (380,350)], np.float32)
+# manually selected points for warping. Make sure straightline look straight
+src = np.float32([[(200, 720), (560, 470), (720, 470), (1130, 720)]])
+dst = np.float32([[(320, 720), (320, 0), (920, 0), (920, 720)]])
 # load calibration data
 calibration_data = np.load('./calibration_data.npz')
 mtx, dist = calibration_data['mtx'], calibration_data['dist']
 # Test images
 calibration_img = mpimg.imread('./camera_cal/calibration1.jpg')
-img = mpimg.imread('./test_images/straight_lines2.jpg')
+img = mpimg.imread('./test_images/straight_lines1.jpg')
+# img = mpimg.imread('./debug/original2.jpg')
 
 ## process video
-video_in = 'project_video.mp4'
-# video_in = 'challenge_video.mp4'
+enableDebug = True
+# video_in = 'project_video.mp4'
+video_in = 'challenge_video.mp4'
 # video_in = 'harder_challenge_video.mp4'
 video_out = video_in.split('.')[0] + '_processed.' + video_in.split('.')[1]
-clip = VideoFileClip(video_in).subclip(23,25)
+clip = VideoFileClip(video_in)
 line = Line()
 clip_processed = clip.fl_image(process_image)
 clip_processed.write_videofile(video_out, audio=False)
