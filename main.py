@@ -67,14 +67,14 @@ def dir_threshold(gray, sobel_kernel=15, thresh=(0.7, 1.3)):
     dir_output[(direction >= thresh[0]) & (direction <= thresh[1])] = 1
     return dir_output
 
-def color_threshold(img, thresh=(170, 255)):
-    # hls = cv2.cvtColor(img, cv2.COLOR_RGB2HLS)
+def color_threshold(img, thresh=(90, 200)):
+    hls = cv2.cvtColor(img, cv2.COLOR_RGB2HLS)
     # rchannel = img[:,:,0]
     # rchannel_binary = np.zeros_like(rchannel)
-    # rchannel_binary[(rchannel > thresh[0]) & (rchannel < thresh[1])] = 1
-    # schannel = hls[:,:,2]
-    # schannel_binary = np.zeros_like(schannel)
-    # schannel_binary[(schannel > thresh[0]) & (schannel < thresh[1])] = 1
+    # rchannel_binary[(rchannel > 200) & (rchannel < 255)] = 1
+    schannel = hls[:,:,2]
+    schannel_binary = np.zeros_like(schannel)
+    schannel_binary[(schannel > thresh[0]) & (schannel < thresh[1])] = 1
     # combined_binary = np.zeros_like(rchannel)
     # combined_binary[(rchannel > 200) & (rchannel < 255)] = 1
     lower_yellow_hsv = (20, 100, 100)
@@ -84,8 +84,7 @@ def color_threshold(img, thresh=(170, 255)):
     hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
     yellow = cv2.inRange(hsv, lower_yellow_hsv, upper_yellow_hsv)
     white = cv2.inRange(img, lower_white_rgb, upper_white_rgb)
-    combined_binary = cv2.bitwise_or(yellow, white)//255
-
+    combined_binary = cv2.bitwise_or(yellow, white)//255 | schannel_binary
 
     ## Test sobel threshold and color threshold
     # fig, axes = plt.subplots(1,2,figsize=(10,6))
@@ -142,7 +141,7 @@ def find_lane_line_sliding_windows(img):
     leftx_current = leftx_base
     rightx_current = rightx_base
     # Set the width of the windows +/- margin
-    margin = 100
+    margin = 30
     # Set minimum number of pixels found to recenter window
     minpix = 50
     # Create empty lists to receive left and right lane pixel indices
@@ -212,7 +211,7 @@ def find_lane_line(img, left_fit, right_fit):
     nonzero = gray.nonzero()
     nonzeroy = np.array(nonzero[0])
     nonzerox = np.array(nonzero[1])
-    margin = 100
+    margin = 30
     left_lane_inds = ((nonzerox > (left_fit[0]*(nonzeroy**2) + left_fit[1]*nonzeroy + left_fit[2] - margin)) & (nonzerox < (left_fit[0]*(nonzeroy**2) + left_fit[1]*nonzeroy + left_fit[2] + margin))) 
     right_lane_inds = ((nonzerox > (right_fit[0]*(nonzeroy**2) + right_fit[1]*nonzeroy + right_fit[2] - margin)) & (nonzerox < (right_fit[0]*(nonzeroy**2) + right_fit[1]*nonzeroy + right_fit[2] + margin)))  
 
@@ -221,6 +220,14 @@ def find_lane_line(img, left_fit, right_fit):
     lefty = nonzeroy[left_lane_inds] 
     rightx = nonzerox[right_lane_inds]
     righty = nonzeroy[right_lane_inds]
+    line.leftx.append(leftx)
+    line.lefty.append(lefty)
+    line.rightx.append(rightx)
+    line.righty.append(righty)
+    leftx = np.concatenate(line.leftx[-1:-4:-1])
+    lefty = np.concatenate(line.lefty[-1:-4:-1])
+    rightx = np.concatenate(line.rightx[-1:-4:-1])
+    righty = np.concatenate(line.righty[-1:-4:-1])
     new_fit_found = True
     if len(leftx) == 0 or len(rightx) == 0:
         new_fit_found = False
@@ -309,6 +316,10 @@ def unwarp(undist, left_fitx, right_fitx, ploty):
 
 def process_image(img):
     undist = cv2.undistort(img, mtx, dist)
+    hls = cv2.cvtColor(undist, cv2.COLOR_RGB2HLS)
+    schannel = hls[:,:,2]
+    schannel_binary = np.zeros_like(schannel)
+    schannel_binary[(schannel > 90) & (schannel < 255)] = 1
     gray = cv2.cvtColor(undist, cv2.COLOR_RGB2GRAY)
     gradx = abs_sobel_thresh(gray)
     mag_binary = mag_thresh(gray)
@@ -316,7 +327,7 @@ def process_image(img):
     sobel_combined = dir_binary & mag_binary
     
     color_binary = color_threshold(undist)
-    combined = color_binary | sobel_combined
+    combined = color_binary
     warped = perspective_transform(combined)
     original_warped = perspective_transform(undist)
 
@@ -326,8 +337,9 @@ def process_image(img):
                 warped, line.current_fit[0], line.current_fit[1])
         if not new_fit_found:
             line.debugOut = True
-            line.detected = False
-            print('find_lane_line found cannot polyfit. Check debug/{}.jpg'.format(line.debugCount))
+            # line.detected = False
+            print('find_lane_line found cannot polyfit. Check {}/{}.jpg'.format(
+                line.debugDir, line.debugCount))
         else:
             line.current_fit = [new_left_fit, new_right_fit]
     else:
@@ -340,7 +352,8 @@ def process_image(img):
             line.current_fit = [new_left_fit, new_right_fit]
         else:
             line.debugOut = True
-            print('find_lane_line_sliding_windows cannot polyfit. Check debug/{}.jpg'.format(line.debugCount))
+            print('find_lane_line_sliding_windows cannot polyfit. Check {}/{}.jpg'.format(
+                line.debugDir, line.debugCount))
 
     unwarped, color_warp = unwarp(undist, left_fitx, right_fitx, ploty)
     left_radius, right_radius, center_offset = curvature_and_offset(unwarped, left_fitx, right_fitx, ploty)
@@ -349,7 +362,8 @@ def process_image(img):
     absolute_diff = abs(left_radius-right_radius)
     if enableDebug and (absolute_diff > .2*abs(left_radius) or absolute_diff > .2*abs(right_radius)):
         line.debugOut = True
-        print('Sanity check failed for left and right radius. Use {}.jpg to debug'.format(line.debugCount))
+        print('Sanity check failed for left and right radius. Check {}/{}.jpg'.format(
+            line.debugDir, line.debugCount))
         print(left_radius, 'm', right_radius, 'm', center_offset, 'm')
 
     cv2.putText(unwarped, 'Radius of Curvature = {}(m)'.format((left_radius+right_radius)//2), (50,100),
@@ -358,10 +372,10 @@ def process_image(img):
             cv2.FONT_HERSHEY_SIMPLEX, fontScale=2, color=(255,255,255), thickness=2, lineType=cv2.LINE_AA)
     if enableDebug and line.debugOut:
         line.debugOut = False
-        fig, axes = plt.subplots(3,4, figsize=(24,15))
+        fig, axes = plt.subplots(4,4, figsize=(24,16))
         fig.tight_layout()
-        images = [img, unwarped, gray, gradx, mag_binary, dir_binary, sobel_combined, color_binary, combined, warped, color_warp, original_warped]
-        titles = ['img', 'unwarped', 'gray', 'gradx', 'mag_binary', 'dir_binary', 'sobel_combined', 'color_binary', 'combined', 'warped', 'color_warp', 'original_warped']
+        images = [img, unwarped, gray, schannel, schannel_binary, gradx, mag_binary, dir_binary, sobel_combined, color_binary, combined, warped, color_warp, original_warped]
+        titles = ['img', 'unwarped', 'gray', 'schannel', 'schannel_binary', 'gradx', 'mag_binary', 'dir_binary', 'sobel_combined', 'color_binary', 'combined', 'warped', 'color_warp', 'original_warped']
         for i, image in enumerate(images):
             if i == 0 or i == 1:
                 fig.axes[i].imshow(image)
@@ -380,8 +394,9 @@ def process_image(img):
         # axes[1,1].set_title('Combined Binary')
         # axes[1,2].imshow(warped)
         # axes[1,2].set_title('Warped')
-        plt.savefig('debug/{}.jpg'.format(line.debugCount))
-        cv2.imwrite('debug/original{}.jpg'.format(line.debugCount), img)
+        plt.savefig('{}/{}.jpg'.format(line.debugDir, line.debugCount))
+        cv2.imwrite('{}/original{}.jpg'.format(line.debugDir, line.debugCount),
+                cv2.cvtColor(img,cv2.COLOR_BGR2RGB))
         line.debugCount += 1
 
     return unwarped
@@ -393,6 +408,10 @@ class Line():
         self.detected = False  
         # x values of the last n fits of the line
         self.recent_xfitted = [] 
+        self.leftx = []
+        self.lefty = []
+        self.rightx = []
+        self.righty = []
         #average x values of the fitted line over the last n iterations
         self.bestx = None     
         #polynomial coefficients averaged over the last n iterations
@@ -414,7 +433,7 @@ class Line():
         self.debugCount = 0
 
 # manually selected points for warping. Make sure straightline look straight
-src = np.float32([[(200, 720), (560, 470), (720, 470), (1130, 720)]])
+src = np.float32([[(200, 720), (565, 470), (725, 470), (1130, 720)]])
 dst = np.float32([[(320, 720), (320, 0), (920, 0), (920, 720)]])
 # load calibration data
 calibration_data = np.load('./calibration_data.npz')
@@ -430,8 +449,9 @@ enableDebug = True
 video_in = 'challenge_video.mp4'
 # video_in = 'harder_challenge_video.mp4'
 video_out = video_in.split('.')[0] + '_processed.' + video_in.split('.')[1]
-clip = VideoFileClip(video_in)
+clip = VideoFileClip(video_in).subclip(4,6)
 line = Line()
+line.debugDir = video_in.split('.')[0] + '_debug'
 clip_processed = clip.fl_image(process_image)
 clip_processed.write_videofile(video_out, audio=False)
 # retrieve_points_for_warping(img)
