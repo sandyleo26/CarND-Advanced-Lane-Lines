@@ -20,8 +20,8 @@ The goals / steps of this project are the following:
 [image4]: ./examples/warped_straight_lines.jpg "Warp Example"
 [image5]: ./examples/color_fit_lines.jpg "Fit Visual"
 [image6]: ./examples/example_output.png "Output"
-[video1]: ./project_video_processed.mp4 "Video"
-[video2]: ./challenge_video_processed.mp4 "Video"
+[video1]: ./project_video_processed.mp4 "project_video.mp4"
+[video2]: ./challenge_video_processed.mp4 "challenge_video.mp4"
 
 ## [Rubric](https://review.udacity.com/#!/rubrics/571/view) Points
 
@@ -100,8 +100,8 @@ I did this in the function `curvature_and_offset`
 
 #### 1. Provide a link to your final video output.  Your pipeline should perform reasonably well on the entire project video (wobbly lines are ok but no catastrophic failures that would cause the car to drive off the road!).
 
-Here's a ![link to my video result](video1)
-Here's a ![link to my challenge video result](video2)
+Here's a [project_video_processed.mp4](./project_video_processed.mp4)
+Here's a [challenge_video_processed.mp4](./challenge_video_processed.mp4)
 
 ---
 
