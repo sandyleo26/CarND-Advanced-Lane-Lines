@@ -84,7 +84,8 @@ def color_threshold(img, thresh=(90, 200)):
     hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
     yellow = cv2.inRange(hsv, lower_yellow_hsv, upper_yellow_hsv)
     white = cv2.inRange(img, lower_white_rgb, upper_white_rgb)
-    combined_binary = cv2.bitwise_or(yellow, white)//255 | schannel_binary
+    combined_binary = np.zeros_like(schannel)
+    combined_binary[cv2.bitwise_or(yellow, white) > 0] = 1
 
     ## Test sobel threshold and color threshold
     # fig, axes = plt.subplots(1,2,figsize=(10,6))
@@ -317,10 +318,10 @@ def unwarp(undist, left_fitx, right_fitx, ploty):
 def process_image(img):
     undist = cv2.undistort(img, mtx, dist)
     hls = cv2.cvtColor(undist, cv2.COLOR_RGB2HLS)
+    gray = cv2.cvtColor(undist, cv2.COLOR_RGB2GRAY)
     schannel = hls[:,:,2]
     schannel_binary = np.zeros_like(schannel)
     schannel_binary[(schannel > 90) & (schannel < 255)] = 1
-    gray = cv2.cvtColor(undist, cv2.COLOR_RGB2GRAY)
     gradx = abs_sobel_thresh(gray)
     mag_binary = mag_thresh(gray)
     dir_binary = dir_threshold(gray)
@@ -395,8 +396,7 @@ def process_image(img):
         # axes[1,2].imshow(warped)
         # axes[1,2].set_title('Warped')
         plt.savefig('{}/{}.jpg'.format(line.debugDir, line.debugCount))
-        cv2.imwrite('{}/original{}.jpg'.format(line.debugDir, line.debugCount),
-                cv2.cvtColor(img,cv2.COLOR_BGR2RGB))
+        plt.imsave('{}/original{}.jpg'.format(line.debugDir, line.debugCount), img)
         line.debugCount += 1
 
     return unwarped
@@ -433,7 +433,7 @@ class Line():
         self.debugCount = 0
 
 # manually selected points for warping. Make sure straightline look straight
-src = np.float32([[(200, 720), (565, 470), (725, 470), (1130, 720)]])
+src = np.float32([[(200, 720), (570, 470), (720, 470), (1130, 720)]])
 dst = np.float32([[(320, 720), (320, 0), (920, 0), (920, 720)]])
 # load calibration data
 calibration_data = np.load('./calibration_data.npz')
@@ -446,10 +446,10 @@ img = mpimg.imread('./test_images/straight_lines1.jpg')
 ## process video
 enableDebug = True
 # video_in = 'project_video.mp4'
-video_in = 'challenge_video.mp4'
-# video_in = 'harder_challenge_video.mp4'
+# video_in = 'challenge_video.mp4'
+video_in = 'harder_challenge_video.mp4'
 video_out = video_in.split('.')[0] + '_processed.' + video_in.split('.')[1]
-clip = VideoFileClip(video_in).subclip(4,6)
+clip = VideoFileClip(video_in).subclip(14,15)
 line = Line()
 line.debugDir = video_in.split('.')[0] + '_debug'
 clip_processed = clip.fl_image(process_image)
