@@ -32,15 +32,19 @@ def get_mtx_dist():
 
     return mtx, dist
 
-def abs_sobel_thresh(gray, orient='x', sobel_kernel=9, thresh=(30, 100)):
-    sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0) # Take the derivative in x
-    abs_sobelx = np.absolute(sobelx) # Absolute x derivative to accentuate lines away from horizontal
-    scaled_sobel = np.uint8(255*abs_sobelx/np.max(abs_sobelx))
+def abs_threshold(gray, orient='x', sobel_kernel=9, thresh=(30, 100)):
+    if orient == 'x':
+        sobel = cv2.Sobel(gray, cv2.CV_64F, 1, 0)
+    else:
+        sobel = cv2.Sobel(gray, cv2.CV_64F, 0, 1)
+        
+    abs_sobel = np.absolute(sobel) # Absolute x derivative to accentuate lines away from horizontal
+    scaled_sobel = np.uint8(255*abs_sobel/np.max(abs_sobel))
     grad_binary = np.zeros_like(gray)
     grad_binary[(scaled_sobel > thresh[0]) & (scaled_sobel < thresh[1])] = 1
     return grad_binary
 
-def mag_thresh(gray, sobel_kernel=9, mag_thresh=(30, 100)):
+def mag_threshold(gray, sobel_kernel=9, mag_thresh=(30, 100)):
     # Take both Sobel x and y gradients
     sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=sobel_kernel)
     sobely = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=sobel_kernel)
@@ -67,32 +71,32 @@ def dir_threshold(gray, sobel_kernel=15, thresh=(0.7, 1.3)):
     dir_output[(direction >= thresh[0]) & (direction <= thresh[1])] = 1
     return dir_output
 
-def color_threshold(img, thresh=(90, 200)):
+def hsv_threshold(img):
+    hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
+    lower_yellow_hsv = (20, 50, 100)
+    upper_yellow_hsv = (40, 255, 255)
+    yellow = cv2.inRange(hsv, lower_yellow_hsv, upper_yellow_hsv)
+    return yellow & np.ones_like(yellow)
+
+def rgb_threshold(img):
+    lower_white_rgb = (200, 200, 200)
+    upper_white_rgb = (255, 255, 255)
+    white = cv2.inRange(img, lower_white_rgb, upper_white_rgb)
+    return white & np.ones_like(white)
+
+def hls_threshold(img, thresh=(90, 200)):
     hls = cv2.cvtColor(img, cv2.COLOR_RGB2HLS)
-    # rchannel = img[:,:,0]
-    # rchannel_binary = np.zeros_like(rchannel)
-    # rchannel_binary[(rchannel > 200) & (rchannel < 255)] = 1
     schannel = hls[:,:,2]
     schannel_binary = np.zeros_like(schannel)
     schannel_binary[(schannel > thresh[0]) & (schannel < thresh[1])] = 1
-    # combined_binary = np.zeros_like(rchannel)
-    # combined_binary[(rchannel > 200) & (rchannel < 255)] = 1
-    lower_yellow_hsv = (20, 100, 100)
-    upper_yellow_hsv = (40, 255, 255)
-    lower_white_rgb = (200, 200, 200)
-    upper_white_rgb = (255, 255, 255)
-    hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
-    yellow = cv2.inRange(hsv, lower_yellow_hsv, upper_yellow_hsv)
-    white = cv2.inRange(img, lower_white_rgb, upper_white_rgb)
-    combined_binary = np.zeros_like(schannel)
-    combined_binary[cv2.bitwise_or(yellow, white) > 0] = 1
+    return schannel_binary
 
-    ## Test sobel threshold and color threshold
-    # fig, axes = plt.subplots(1,2,figsize=(10,6))
-    # axes[0].imshow(schannel, cmap='gray')
-    # axes[1].imshow(schannel_binary, cmap='gray')
-    # plt.show()
-    return combined_binary
+def color_threshold(img):
+    hsv_binary = hsv_threshold(img)
+    hls_binary = hls_threshold(img)
+    rgb_binary = rgb_threshold(img)
+    result = hsv_binary | hls_binary | rgb_binary
+    return result
 
 ## find 4 points for perspective transform
 def retrieve_points_for_warping(img):
@@ -121,10 +125,7 @@ def perspective_transform(img):
     return warped
 
 ## using sliding window to find lane line
-def find_lane_line_sliding_windows(img):
-    gray = img
-    if len(img.shape) == 3:
-        gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+def sliding_window_find(original, gray):
     out_img = np.dstack((gray, gray, gray))*255
 
     histogram = np.sum(gray[gray.shape[0]//2:,:], axis=0)
@@ -181,16 +182,21 @@ def find_lane_line_sliding_windows(img):
     lefty = nonzeroy[left_lane_inds] 
     rightx = nonzerox[right_lane_inds]
     righty = nonzeroy[right_lane_inds] 
-    new_fit_found = True
     if len(lefty) == 0 or len(righty) == 0:
-        return False, np.array([]), np.array([])
+        tracker.log('sliding_window_find cannot polyfit.', original, out_img)
+        return tracker.get_average_fitx()
+
     # Fit a second order polynomial to each
     left_fit = np.polyfit(lefty, leftx, 2)
     right_fit = np.polyfit(righty, rightx, 2)
-    # Generate x and y values for plotting
-    ploty = np.linspace(0, gray.shape[0]-1, gray.shape[0] )
-    left_fitx = left_fit[0]*ploty**2 + left_fit[1]*ploty + left_fit[2]
-    right_fitx = right_fit[0]*ploty**2 + right_fit[1]*ploty + right_fit[2]
+
+    if not tracker.checkSanity(left_fit, right_fit):
+        ploty = np.linspace(0, img_height-1, img_height)
+        left_fitx = left_fit[0]*ploty**2 + left_fit[1]*ploty + left_fit[2]
+        right_fitx = right_fit[0]*ploty**2 + right_fit[1]*ploty + right_fit[2]
+        out_img[left_fitx, ploty] = [255,255,0] # yellow
+        out_img[right_fitx, ploty] = [255,255,0] # yellow
+        tracker.log('sliding_window_find sanity check failed.', original, out_img)
 
     ## visualize
     # out_img[nonzeroy[left_lane_inds], nonzerox[left_lane_inds]] = [255, 0, 0]
@@ -202,17 +208,16 @@ def find_lane_line_sliding_windows(img):
     # #plt.ylim(720, 0)
     # plt.show()
 
-    return new_fit_found, left_fit, right_fit
+    return tracker.get_average_fitx()
 
 ## find lane lines using polyfit parameters returned from previous blind search (e.g. sliding windows)
-def find_lane_line(img, left_fit, right_fit):
-    gray = img
-    if len(img.shape) == 3:
-        gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+def quick_find(original, gray):
+    ploty = np.linspace(0, img_height-1, img_height).astype(np.int)
     nonzero = gray.nonzero()
     nonzeroy = np.array(nonzero[0])
     nonzerox = np.array(nonzero[1])
     margin = 30
+    left_fit, right_fit = tracker.get_average_fit()
     left_lane_inds = ((nonzerox > (left_fit[0]*(nonzeroy**2) + left_fit[1]*nonzeroy + left_fit[2] - margin)) & (nonzerox < (left_fit[0]*(nonzeroy**2) + left_fit[1]*nonzeroy + left_fit[2] + margin))) 
     right_lane_inds = ((nonzerox > (right_fit[0]*(nonzeroy**2) + right_fit[1]*nonzeroy + right_fit[2] - margin)) & (nonzerox < (right_fit[0]*(nonzeroy**2) + right_fit[1]*nonzeroy + right_fit[2] + margin)))  
 
@@ -221,55 +226,54 @@ def find_lane_line(img, left_fit, right_fit):
     lefty = nonzeroy[left_lane_inds] 
     rightx = nonzerox[right_lane_inds]
     righty = nonzeroy[right_lane_inds]
-    line.leftx.append(leftx)
-    line.lefty.append(lefty)
-    line.rightx.append(rightx)
-    line.righty.append(righty)
-    leftx = np.concatenate(line.leftx[-1:-4:-1])
-    lefty = np.concatenate(line.lefty[-1:-4:-1])
-    rightx = np.concatenate(line.rightx[-1:-4:-1])
-    righty = np.concatenate(line.righty[-1:-4:-1])
-    new_fit_found = True
     if len(leftx) == 0 or len(rightx) == 0:
-        new_fit_found = False
-        new_left_fit = left_fit
-        new_right_fit = right_fit
-    else:
-        # Fit a second order polynomial to each
-        new_left_fit = np.polyfit(lefty, leftx, 2)
-        new_right_fit = np.polyfit(righty, rightx, 2)
+        out_img = np.dstack((gray, gray, gray))*255
+        out_img[nonzeroy[left_lane_inds], nonzerox[left_lane_inds]] = [255, 0, 0]
+        out_img[nonzeroy[right_lane_inds], nonzerox[right_lane_inds]] = [0, 0, 255]
+        out_img[ploty, tracker.get_average_fitx()[0]] = [255,255,0] # yellow
+        out_img[ploty, tracker.get_average_fitx()[1]] = [255,255,0] # yellow
+        tracker.log('quick_find cannot polyfit.', original, out_img)
+        return tracker.get_average_fitx()
 
-    # Generate x and y values for plotting
-    ploty = np.linspace(0, gray.shape[0]-1, gray.shape[0] )
-    left_fitx = new_left_fit[0]*ploty**2 + new_left_fit[1]*ploty + new_left_fit[2]
-    right_fitx = new_right_fit[0]*ploty**2 + new_right_fit[1]*ploty + new_right_fit[2]
-    vehicley = ploty[-1]
-    vehicelx = (left_fitx[-1] + right_fitx[-1]) // 2
-
-    ## Create an image to draw on and an image to show the selection window
     out_img = np.dstack((gray, gray, gray))*255
-    window_img = np.zeros_like(out_img)
-    # Color in left and right line pixels
     out_img[nonzeroy[left_lane_inds], nonzerox[left_lane_inds]] = [255, 0, 0]
     out_img[nonzeroy[right_lane_inds], nonzerox[right_lane_inds]] = [0, 0, 255]
-    left_line_window1 = np.array([np.transpose(np.vstack([left_fitx-margin, ploty]))])
-    left_line_window2 = np.array([np.flipud(np.transpose(np.vstack([left_fitx+margin, ploty])))])
-    left_line_pts = np.hstack((left_line_window1, left_line_window2))
-    right_line_window1 = np.array([np.transpose(np.vstack([right_fitx-margin, ploty]))])
-    right_line_window2 = np.array([np.flipud(np.transpose(np.vstack([right_fitx+margin, ploty])))])
-    right_line_pts = np.hstack((right_line_window1, right_line_window2))
+    out_img[ploty, tracker.get_average_fitx()[0]] = [255,255,0] # yellow
+    out_img[ploty, tracker.get_average_fitx()[1]] = [255,255,0] # yellow
+    tracker.log('quick_find 2 cannot polyfit.', original, out_img)
+
+    # Fit a second order polynomial to each
+    left_fit = np.polyfit(lefty, leftx, 2)
+    right_fit = np.polyfit(righty, rightx, 2)
+
+    if not tracker.checkSanity(left_fit, right_fit):
+        left_fitx = left_fit[0]*ploty**2 + left_fit[1]*ploty + left_fit[2]
+        right_fitx = right_fit[0]*ploty**2 + right_fit[1]*ploty + right_fit[2]
+        out_img[left_fitx, ploty] = [255,255,0] # yellow
+        out_img[right_fitx, ploty] = [255,255,0] # yellow
+        tracker.log('quick_find sanity check failed.', original, out_img)
+
+    ### Create an image to draw on and an image to show the selection window
+    # window_img = np.zeros_like(out_img)
+    ### Color in left and right line pixels
+    # left_line_window1 = np.array([np.transpose(np.vstack([left_fitx-margin, ploty]))])
+    # left_line_window2 = np.array([np.flipud(np.transpose(np.vstack([left_fitx+margin, ploty])))])
+    # left_line_pts = np.hstack((left_line_window1, left_line_window2))
+    # right_line_window1 = np.array([np.transpose(np.vstack([right_fitx-margin, ploty]))])
+    # right_line_window2 = np.array([np.flipud(np.transpose(np.vstack([right_fitx+margin, ploty])))])
+    # right_line_pts = np.hstack((right_line_window1, right_line_window2))
 
     # Draw the lane onto the warped blank image
-    cv2.fillPoly(window_img, np.int_([left_line_pts]), (0,255, 0))
-    cv2.fillPoly(window_img, np.int_([right_line_pts]), (0,255, 0))
-    result = cv2.addWeighted(out_img, 1, window_img, 0.3, 0)
+    # cv2.fillPoly(window_img, np.int_([left_line_pts]), (0,255, 0))
+    # cv2.fillPoly(window_img, np.int_([right_line_pts]), (0,255, 0))
+    # result = cv2.addWeighted(out_img, 1, window_img, 0.3, 0)
     # plt.imshow(result)
     # plt.plot(left_fitx, ploty, color='yellow')
     # plt.plot(right_fitx, ploty, color='yellow')
     # plt.xlim(0, 1280)
     # plt.ylim(720, 0)
     # plt.show()
-    return new_fit_found, new_left_fit, new_right_fit, left_fitx, right_fitx, ploty
+    return tracker.get_average_fitx()
 
 ## calculate radius and center offset
 def curvature_and_offset(img, leftx, rightx, ploty):
@@ -288,7 +292,7 @@ def curvature_and_offset(img, leftx, rightx, ploty):
     left_curverad = ((1 + (2*left_fit_cr[0]*y_eval*ym_per_pix + left_fit_cr[1])**2)**1.5) / np.absolute(2*left_fit_cr[0])
     right_curverad = ((1 + (2*right_fit_cr[0]*y_eval*ym_per_pix + right_fit_cr[1])**2)**1.5) / np.absolute(2*right_fit_cr[0])
 
-    lane_center_offset = (rightx[-1] + leftx[-1] - img.shape[1]//2)//2 * xm_per_pix
+    lane_center_offset = ((rightx[-1] + leftx[-1])/2 - img.shape[1]/2) * xm_per_pix
     return left_curverad, right_curverad, lane_center_offset
 
 ## unwarp birdeye view to normal view
@@ -317,120 +321,120 @@ def unwarp(undist, left_fitx, right_fitx, ploty):
 
 def process_image(img):
     undist = cv2.undistort(img, mtx, dist)
-    hls = cv2.cvtColor(undist, cv2.COLOR_RGB2HLS)
     gray = cv2.cvtColor(undist, cv2.COLOR_RGB2GRAY)
-    schannel = hls[:,:,2]
-    schannel_binary = np.zeros_like(schannel)
-    schannel_binary[(schannel > 90) & (schannel < 255)] = 1
-    gradx = abs_sobel_thresh(gray)
-    mag_binary = mag_thresh(gray)
-    dir_binary = dir_threshold(gray)
-    sobel_combined = dir_binary & mag_binary
-    
     color_binary = color_threshold(undist)
     combined = color_binary
-    warped = perspective_transform(combined)
+    combined_warped = perspective_transform(combined)
     original_warped = perspective_transform(undist)
 
-    left_fitx, right_fitx, ploty = np.array([]), np.array([]), np.linspace(0, gray.shape[0]-1, gray.shape[0] )
-    if line.detected:
-        new_fit_found, new_left_fit, new_right_fit, left_fitx, right_fitx, _ = find_lane_line(
-                warped, line.current_fit[0], line.current_fit[1])
-        if not new_fit_found:
-            line.debugOut = True
-            # line.detected = False
-            print('find_lane_line found cannot polyfit. Check {}/{}.jpg'.format(
-                line.debugDir, line.debugCount))
-        else:
-            line.current_fit = [new_left_fit, new_right_fit]
+    left_fitx, right_fitx, ploty = np.array([]), np.array([]), np.linspace(0, img_height-1, img_height)
+    if tracker.get_average_fitx() != None:
+        left_fitx, right_fitx = quick_find(img, combined_warped)
     else:
-        new_fit_found, left_fit, right_fit = find_lane_line_sliding_windows(warped)
-        if new_fit_found:
-            new_fit_found, new_left_fit, new_right_fit, left_fitx, right_fitx, _ = find_lane_line(
-                    warped, left_fit, right_fit)
-            assert(new_fit_found)
-            line.detected = True
-            line.current_fit = [new_left_fit, new_right_fit]
-        else:
-            line.debugOut = True
-            print('find_lane_line_sliding_windows cannot polyfit. Check {}/{}.jpg'.format(
-                line.debugDir, line.debugCount))
+        left_fitx, right_fitx = sliding_window_find(img, combined_warped)
 
     unwarped, color_warp = unwarp(undist, left_fitx, right_fitx, ploty)
     left_radius, right_radius, center_offset = curvature_and_offset(unwarped, left_fitx, right_fitx, ploty)
-
-    # sanity check left&right radius
-    absolute_diff = abs(left_radius-right_radius)
-    if enableDebug and (absolute_diff > .2*abs(left_radius) or absolute_diff > .2*abs(right_radius)):
-        line.debugOut = True
-        print('Sanity check failed for left and right radius. Check {}/{}.jpg'.format(
-            line.debugDir, line.debugCount))
-        print(left_radius, 'm', right_radius, 'm', center_offset, 'm')
 
     cv2.putText(unwarped, 'Radius of Curvature = {}(m)'.format((left_radius+right_radius)//2), (50,100),
             cv2.FONT_HERSHEY_SIMPLEX, fontScale=2, color=(255,255,255), thickness=2, lineType=cv2.LINE_AA)
     cv2.putText(unwarped, 'Vehicle is {:.2f}m off center'.format(center_offset), (50,160),
             cv2.FONT_HERSHEY_SIMPLEX, fontScale=2, color=(255,255,255), thickness=2, lineType=cv2.LINE_AA)
-    if enableDebug and line.debugOut:
-        line.debugOut = False
-        fig, axes = plt.subplots(4,4, figsize=(24,16))
-        fig.tight_layout()
-        images = [img, unwarped, gray, schannel, schannel_binary, gradx, mag_binary, dir_binary, sobel_combined, color_binary, combined, warped, color_warp, original_warped]
-        titles = ['img', 'unwarped', 'gray', 'schannel', 'schannel_binary', 'gradx', 'mag_binary', 'dir_binary', 'sobel_combined', 'color_binary', 'combined', 'warped', 'color_warp', 'original_warped']
-        for i, image in enumerate(images):
-            if i == 0 or i == 1:
-                fig.axes[i].imshow(image)
-            else:
-                fig.axes[i].imshow(image, cmap='gray')
-            fig.axes[i].set_title(titles[i])
-        # axes[0,0].imshow(img)
-        # axes[0,0].set_title('Original')
-        # axes[0,1].imshow(unwarped)
-        # axes[0,1].set_title('Unwarped')
-        # axes[0,2].imshow(sobel_binary)
-        # axes[0,2].set_title('Sobel Binary')
-        # axes[1,0].imshow(color_binary)
-        # axes[1,0].set_title('Color Binary')
-        # axes[1,1].imshow(binary_img)
-        # axes[1,1].set_title('Combined Binary')
-        # axes[1,2].imshow(warped)
-        # axes[1,2].set_title('Warped')
-        plt.savefig('{}/{}.jpg'.format(line.debugDir, line.debugCount))
-        plt.imsave('{}/original{}.jpg'.format(line.debugDir, line.debugCount), img)
-        line.debugCount += 1
 
     return unwarped
 
 # Define a class to receive the characteristics of each line detection
-class Line():
+class Tracker():
     def __init__(self):
         # was the line detected in the last iteration?
         self.detected = False  
         # x values of the last n fits of the line
-        self.recent_xfitted = [] 
-        self.leftx = []
-        self.lefty = []
-        self.rightx = []
-        self.righty = []
+        self.left_fitx_history = np.array([])
+        self.right_fitx_history = np.array([])
         #average x values of the fitted line over the last n iterations
-        self.bestx = None     
-        #polynomial coefficients averaged over the last n iterations
-        self.best_fit = None  
-        #polynomial coefficients for the most recent fit
-        self.current_fit = None
-        #radius of curvature of the line in some units
-        self.radius_of_curvature = None 
-        #distance in meters of vehicle center from the line
-        self.line_base_pos = None 
-        #difference in fit coefficients between last and new fits
-        self.diffs = np.array([0,0,0], dtype='float') 
-        #x values for detected line pixels
-        self.allx = None  
-        #y values for detected line pixels
-        self.ally = None
+        self.average_fitx = None
+        self.average_fit = None
         # debug image count
         self.debugOut = False
+        self.enableDebug = False
+        self.debugDir = ''
         self.debugCount = 0
+        self.avgFactor = 10
+        self.diffMargin = 50
+        self.ploty = np.linspace(0, img_height-1, img_height)
+
+    def reset(self):
+        self.__init__()
+
+    def recalculate_average(self):
+        self.average_fitx = (np.average(self.left_fitx_history[-self.avgFactor:], axis=0).astype(np.int),
+                np.average(self.right_fitx_history[-self.avgFactor:], axis=0).astype(np.int))
+
+        self.average_fit = (np.polyfit(self.average_fitx[0], self.ploty, 2),
+                np.polyfit(self.average_fitx[1], self.ploty, 2))
+        return self.get_average_fitx()
+
+    def get_average_fit(self):
+        return self.average_fit
+
+    def get_average_fitx(self):
+        return self.average_fitx
+    
+    def checkSanity(self, unchecked_lfit, unchecked_rfit):
+        ploty = np.linspace(0, img_height-1, img_height)
+        left_fitx = unchecked_lfit[0]*ploty**2 + unchecked_lfit[1]*ploty + unchecked_lfit[2]
+        right_fitx = unchecked_rfit[0]*ploty**2 + unchecked_rfit[1]*ploty + unchecked_rfit[2]
+
+        ## first time run
+        if self.average_fitx == None:
+            self.left_fitx_history = np.array([left_fitx])
+            self.right_fitx_history = np.array([right_fitx])
+            self.recalculate_average()
+            return True
+
+        unchecked_diff = right_fitx - left_fitx
+        left_fitx_avg, right_fitx_avg = self.get_average_fitx()
+        diff_avg = right_fitx_avg - left_fitx_avg
+        check_status = np.absolute(diff_avg - unchecked_diff) > self.diffMargin
+        false_index = check_status.nonzero()
+        left_fitx[false_index] = left_fitx_avg[false_index]
+        right_fitx[false_index] = right_fitx_avg[false_index]
+        self.left_fitx_history = np.vstack((self.left_fitx_history, left_fitx))
+        self.right_fitx_history = np.vstack((self.right_fitx_history, right_fitx))
+        self.recalculate_average()
+
+        # if 1/3 lane width is off compared with average make it fail
+        return len(false_index) < img_height//3
+        
+    def log(self, msg, img, img2 = None):
+        print(msg + ' Check {}/{}.jpg'.format(self.debugDir, self.debugCount))
+        if self.enableDebug:
+            self.saveDebugFig(img, img2)
+
+    def saveDebugFig(self, img, img2):
+        undist = cv2.undistort(img, mtx, dist)
+        gray = cv2.cvtColor(undist, cv2.COLOR_RGB2GRAY)
+        color_binary = color_threshold(undist)
+        combined = color_binary
+        combined_warped = perspective_transform(combined)
+        original_warped = perspective_transform(undist)
+        fig, axes = plt.subplots(3,3, figsize=(18,12))
+        fig.tight_layout()
+        images = [img, gray, combined, combined_warped, original_warped]
+        titles = ['img', 'gray', 'combined', 'combined_warped', 'original_warped']
+        if img2 != None:
+            images.append(img2)
+            titles.append('img2')
+        for i, image in enumerate(images):
+            if len(image.shape) == 3:
+                fig.axes[i].imshow(image)
+            else:
+                fig.axes[i].imshow(image, cmap='gray')
+            fig.axes[i].set_title(titles[i])
+
+        plt.savefig('{}/{}.jpg'.format(tracker.debugDir, tracker.debugCount))
+        plt.imsave('{}/original{}.jpg'.format(tracker.debugDir, tracker.debugCount), img)
+        tracker.debugCount += 1
 
 # manually selected points for warping. Make sure straightline look straight
 src = np.float32([[(200, 720), (570, 470), (720, 470), (1130, 720)]])
@@ -441,18 +445,44 @@ mtx, dist = calibration_data['mtx'], calibration_data['dist']
 # Test images
 calibration_img = mpimg.imread('./camera_cal/calibration1.jpg')
 img = mpimg.imread('./test_images/straight_lines1.jpg')
-# img = mpimg.imread('./debug/original2.jpg')
+img_height = img.shape[0]
+# retrieve_points_for_warping(img)
 
 ## process video
-enableDebug = True
-# video_in = 'project_video.mp4'
+video_in = 'project_video.mp4'
 # video_in = 'challenge_video.mp4'
-video_in = 'harder_challenge_video.mp4'
+# video_in = 'harder_challenge_video.mp4'
 video_out = video_in.split('.')[0] + '_processed.' + video_in.split('.')[1]
 clip = VideoFileClip(video_in).subclip(14,15)
-line = Line()
-line.debugDir = video_in.split('.')[0] + '_debug'
+tracker = Tracker()
+tracker.enableDebug = True
+tracker.debugDir = video_in.split('.')[0] + '_debug'
 clip_processed = clip.fl_image(process_image)
 clip_processed.write_videofile(video_out, audio=False)
-# retrieve_points_for_warping(img)
-# process_image(img)
+
+## run thresholding on exemplar hard images
+def test_threshold():
+    for f in glob.glob('test_images/*'):
+        print(f)
+        img = mpimg.imread(f)
+        color_binary = color_threshold(img)
+        result_name = f.split('.')[0] + '_color.' + f.split('.')[1]
+        # gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+        # gradex_binary = abs_threshold(gray)
+        # gradey_binary = abs_threshold(gray, 'y')
+        # mag_binary = mag_threshold(gray)
+        # dir_binary = dir_threshold(gray)
+        # result_name = f.split('.')[0] + '_sobel.' + f.split('.')[1]
+        # result = (gradex_binary & gradey_binary) | (mag_binary & dir_binary)
+        mpimg.imsave(result_name, result, cmap='gray')
+
+def test_pipeline():
+    for f in glob.glob('test_images/*'):
+        print(f)
+        tracker.reset()
+        img = mpimg.imread(f)
+        result = process_image(img)
+        result_name = f.split('.')[0] + '_processed.' + f.split('.')[1]
+        mpimg.imsave(result_name, result, cmap='gray')
+
+
