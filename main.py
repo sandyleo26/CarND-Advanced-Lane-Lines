@@ -143,9 +143,9 @@ def sliding_window_find(original, gray):
     leftx_current = leftx_base
     rightx_current = rightx_base
     # Set the width of the windows +/- margin
-    margin = 30
+    margin = tracker.window_margin
     # Set minimum number of pixels found to recenter window
-    minpix = 50
+    minpix = tracker.minpix
     # Create empty lists to receive left and right lane pixel indices
     left_lane_inds = []
     right_lane_inds = []
@@ -216,7 +216,7 @@ def quick_find(original, gray):
     nonzero = gray.nonzero()
     nonzeroy = np.array(nonzero[0])
     nonzerox = np.array(nonzero[1])
-    margin = 30
+    margin = tracker.window_margin
     left_fit, right_fit = tracker.get_average_fit()
     left_lane_inds = ((nonzerox > (left_fit[0]*(nonzeroy**2) + left_fit[1]*nonzeroy + left_fit[2] - margin)) & (nonzerox < (left_fit[0]*(nonzeroy**2) + left_fit[1]*nonzeroy + left_fit[2] + margin))) 
     right_lane_inds = ((nonzerox > (right_fit[0]*(nonzeroy**2) + right_fit[1]*nonzeroy + right_fit[2] - margin)) & (nonzerox < (right_fit[0]*(nonzeroy**2) + right_fit[1]*nonzeroy + right_fit[2] + margin)))  
@@ -232,15 +232,24 @@ def quick_find(original, gray):
         out_img[nonzeroy[right_lane_inds], nonzerox[right_lane_inds]] = [0, 0, 255]
         out_img[ploty, tracker.get_average_fitx()[0]] = [255,255,0] # yellow
         out_img[ploty, tracker.get_average_fitx()[1]] = [255,255,0] # yellow
-        tracker.log('quick_find cannot polyfit.', original, out_img)
-        return tracker.get_average_fitx()
 
-    out_img = np.dstack((gray, gray, gray))*255
-    out_img[nonzeroy[left_lane_inds], nonzerox[left_lane_inds]] = [255, 0, 0]
-    out_img[nonzeroy[right_lane_inds], nonzerox[right_lane_inds]] = [0, 0, 255]
-    out_img[ploty, tracker.get_average_fitx()[0]] = [255,255,0] # yellow
-    out_img[ploty, tracker.get_average_fitx()[1]] = [255,255,0] # yellow
-    tracker.log('quick_find 2 cannot polyfit.', original, out_img)
+        window_img = np.zeros_like(out_img)
+        left_fitx = left_fit[0]*ploty**2 + left_fit[1]*ploty + left_fit[2]
+        right_fitx = right_fit[0]*ploty**2 + right_fit[1]*ploty + right_fit[2]
+        left_line_window1 = np.array([np.transpose(np.vstack([left_fitx-margin, ploty]))])
+        left_line_window2 = np.array([np.flipud(np.transpose(np.vstack([left_fitx+margin, ploty])))])
+        left_line_pts = np.hstack((left_line_window1, left_line_window2))
+        right_line_window1 = np.array([np.transpose(np.vstack([right_fitx-margin, ploty]))])
+        right_line_window2 = np.array([np.flipud(np.transpose(np.vstack([right_fitx+margin, ploty])))])
+        right_line_pts = np.hstack((right_line_window1, right_line_window2))
+
+        ## Draw the lane onto the warped blank image
+        cv2.fillPoly(window_img, np.int_([left_line_pts]), (0,255, 0))
+        cv2.fillPoly(window_img, np.int_([right_line_pts]), (0,255, 0))
+        result = cv2.addWeighted(out_img, 1, window_img, 0.3, 0)
+
+        tracker.log('quick_find cannot polyfit.', original, result)
+        return tracker.get_average_fitx()
 
     # Fit a second order polynomial to each
     left_fit = np.polyfit(lefty, leftx, 2)
@@ -362,6 +371,8 @@ class Tracker():
         self.avgFactor = 10
         self.diffMargin = 50
         self.ploty = np.linspace(0, img_height-1, img_height)
+        self.window_margin = 50
+        self.minpix = 50
 
     def reset(self):
         self.__init__()
@@ -370,8 +381,8 @@ class Tracker():
         self.average_fitx = (np.average(self.left_fitx_history[-self.avgFactor:], axis=0).astype(np.int),
                 np.average(self.right_fitx_history[-self.avgFactor:], axis=0).astype(np.int))
 
-        self.average_fit = (np.polyfit(self.average_fitx[0], self.ploty, 2),
-                np.polyfit(self.average_fitx[1], self.ploty, 2))
+        self.average_fit = (np.polyfit(self.ploty, self.average_fitx[0], 2),
+                np.polyfit(self.ploty, self.average_fitx[1], 2))
         return self.get_average_fitx()
 
     def get_average_fit(self):
@@ -453,7 +464,7 @@ video_in = 'project_video.mp4'
 # video_in = 'challenge_video.mp4'
 # video_in = 'harder_challenge_video.mp4'
 video_out = video_in.split('.')[0] + '_processed.' + video_in.split('.')[1]
-clip = VideoFileClip(video_in).subclip(14,15)
+clip = VideoFileClip(video_in)
 tracker = Tracker()
 tracker.enableDebug = True
 tracker.debugDir = video_in.split('.')[0] + '_debug'
@@ -484,5 +495,4 @@ def test_pipeline():
         result = process_image(img)
         result_name = f.split('.')[0] + '_processed.' + f.split('.')[1]
         mpimg.imsave(result_name, result, cmap='gray')
-
 
