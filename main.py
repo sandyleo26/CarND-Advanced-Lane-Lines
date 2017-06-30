@@ -378,8 +378,9 @@ class Tracker():
         self.__init__()
 
     def recalculate_average(self):
-        self.average_fitx = (np.average(self.left_fitx_history[-self.avgFactor:], axis=0).astype(np.int),
-                np.average(self.right_fitx_history[-self.avgFactor:], axis=0).astype(np.int))
+        self.average_fitx = (
+                np.clip(np.average(self.left_fitx_history[-self.avgFactor:], axis=0).astype(np.int), 0, 1279), 
+                np.clip(np.average(self.right_fitx_history[-self.avgFactor:], axis=0).astype(np.int), 0, 1279))
 
         self.average_fit = (np.polyfit(self.ploty, self.average_fitx[0], 2),
                 np.polyfit(self.ploty, self.average_fitx[1], 2))
@@ -460,9 +461,9 @@ img_height = img.shape[0]
 # retrieve_points_for_warping(img)
 
 ## process video
-video_in = 'project_video.mp4'
+# video_in = 'project_video.mp4'
 # video_in = 'challenge_video.mp4'
-# video_in = 'harder_challenge_video.mp4'
+video_in = 'harder_challenge_video.mp4'
 video_out = video_in.split('.')[0] + '_processed.' + video_in.split('.')[1]
 clip = VideoFileClip(video_in)
 tracker = Tracker()

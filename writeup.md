@@ -15,13 +15,13 @@ The goals / steps of this project are the following:
 
 [//]: # (Image References)
 
-[image1]: ./examples/undistort_output.png "Undistorted"
-[image2]: ./test_images/test1.jpg "Road Transformed"
-[image3]: ./examples/binary_combo_example.jpg "Binary Example"
+[image2]: ./examples/undistortion.jpg "Undistortion"
+[image3]: ./examples/thresholding.jpg "Thresholding"
 [image4]: ./examples/warped_straight_lines.jpg "Warp Example"
 [image5]: ./examples/color_fit_lines.jpg "Fit Visual"
-[image6]: ./examples/example_output.jpg "Output"
-[video1]: ./project_video.mp4 "Video"
+[image6]: ./examples/example_output.png "Output"
+[video1]: ./project_video_processed.mp4 "Video"
+[video2]: ./challenge_video_processed.mp4 "Video"
 
 ## [Rubric](https://review.udacity.com/#!/rubrics/571/view) Points
 
@@ -39,52 +39,39 @@ You're reading it!
 
 #### 1. Briefly state how you computed the camera matrix and distortion coefficients. Provide an example of a distortion corrected calibration image.
 
-The code for this step is contained in the first code cell of the IPython notebook located in "./examples/example.ipynb" (or in lines # through # of the file called `some_file.py`).  
+The code for this step is in `get_mtx_dist` function. It reads the calibration images and calculate the calibration matrix and distortion coefficients. It needs only to be run once and data can be saved and later loaded when needed, as in line #455. I basically followed the same method in the video lectures to calculate both parameters.
 
-I start by preparing "object points", which will be the (x, y, z) coordinates of the chessboard corners in the world. Here I am assuming the chessboard is fixed on the (x, y) plane at z=0, such that the object points are the same for each calibration image.  Thus, `objp` is just a replicated array of coordinates, and `objpoints` will be appended with a copy of it every time I successfully detect all chessboard corners in a test image.  `imgpoints` will be appended with the (x, y) pixel position of each of the corners in the image plane with each successful chessboard detection.  
-
-I then used the output `objpoints` and `imgpoints` to compute the camera calibration and distortion coefficients using the `cv2.calibrateCamera()` function.  I applied this distortion correction to the test image using the `cv2.undistort()` function and obtained this result: 
-
-![alt text][image1]
+Then in the very begining of `process_image` function I undistort a given image using the data loaded.
 
 ### Pipeline (single images)
 
 #### 1. Provide an example of a distortion-corrected image.
 
-To demonstrate this step, I will describe how I apply the distortion correction to one of the test images like this one:
+Using the calibration matrix and distortion coefficients above, here are the images before and after undistortion.
 ![alt text][image2]
 
 #### 2. Describe how (and identify where in your code) you used color transforms, gradients or other methods to create a thresholded binary image.  Provide an example of a binary image result.
 
-I used a combination of color and gradient thresholds to generate a binary image (thresholding steps at lines # through # in `another_file.py`).  Here's an example of my output for this step.  (note: this is not actually from one of the test images)
+I experimented with many combinations of thresholding including RGB, HLS, HSV and Sobel thresholding. The approach I take is to use `test_threshold` function to read sample images and output thresholded binary files.
+
+After lots of experiments, I ended using the formula `HSV | S(hls) | RGB`. HSV is to detect yellow lines and RGB is to detect white lines and S channel is a complimentary. The reason I didn't use any Sobel thresholding is I find it poorly especially when lines are darker (e.g. under bridge) and include lots of noise (e.g. black tar line).
+
+This image include the result of applying different thresholding. `color_binary` is the one used in the project.
+
+`color_threshold` is the function used, which internally calls `hsv_threshold`, `rgb_threshold` and `hls_threshold`. There're also `abs_threshold` etc for Sobel gradient but they're not used.
 
 ![alt text][image3]
 
 #### 3. Describe how (and identify where in your code) you performed a perspective transform and provide an example of a transformed image.
 
-The code for my perspective transform includes a function called `warper()`, which appears in lines 1 through 8 in the file `example.py` (output_images/examples/example.py) (or, for example, in the 3rd code cell of the IPython notebook).  The `warper()` function takes as inputs an image (`img`), as well as source (`src`) and destination (`dst`) points.  I chose the hardcode the source and destination points in the following manner:
-
-```python
-src = np.float32(
-    [[(img_size[0] / 2) - 55, img_size[1] / 2 + 100],
-    [((img_size[0] / 6) - 10), img_size[1]],
-    [(img_size[0] * 5 / 6) + 60, img_size[1]],
-    [(img_size[0] / 2 + 55), img_size[1] / 2 + 100]])
-dst = np.float32(
-    [[(img_size[0] / 4), 0],
-    [(img_size[0] / 4), img_size[1]],
-    [(img_size[0] * 3 / 4), img_size[1]],
-    [(img_size[0] * 3 / 4), 0]])
-```
+The `perspective_transform` function does the transform. The tricky part of this step is to find good `src` and `dst` coordinates so that the transformed image is accurate. The approach I take to find them is first pick 4 points in the untransformed image. I use the `straight_lines1.jpg` because I know what transformed image should look like. The function `retrieve_points_for_warping` is written to help print out coordinates when mouse click on a point. Then choose 4 points in destination image so that they form a rectangle. And then do the transform. If it shows awry in one end, then go back and change src coordinates accordinglly until it can be transformed into a pair of paralle lines.
 
 This resulted in the following source and destination points:
 
-| Source        | Destination   | 
-|:-------------:|:-------------:| 
-| 585, 460      | 320, 0        | 
-| 203, 720      | 320, 720      |
-| 1127, 720     | 960, 720      |
-| 695, 460      | 960, 0        |
+```python
+src = np.float32([[(200, 720), (570, 470), (720, 470), (1130, 720)]])
+dst = np.float32([[(320, 720), (320, 0), (920, 0), (920, 720)]])
+```
 
 I verified that my perspective transform was working as expected by drawing the `src` and `dst` points onto a test image and its warped counterpart to verify that the lines appear parallel in the warped image.
 
@@ -92,17 +79,18 @@ I verified that my perspective transform was working as expected by drawing the 
 
 #### 4. Describe how (and identify where in your code) you identified lane-line pixels and fit their positions with a polynomial?
 
-Then I did some other stuff and fit my lane lines with a 2nd order polynomial kinda like this:
+I use the sliding window approach taught in the lecture to detect lane-line pixels. The `sliding_window_find` does that. Later, if a fit has been found, the `quick_find` will instead be used. 
 
-![alt text][image5]
+However, using the fit directly leads to sudden change in curvatures. Also, in challenge videos, not all frame can be found having good lines due to limition of color thresholding. So that means we need store past fits and average them for these two purposes.
+
+The `Tracker` class is written for this and to help debug problems. The `checkSanity` function will compare current left lane right lane (`left_fitx` and `right_fitx`) gap with historical ones; if they're too far away, the current ones will be discarded and the average ones will be used. The `avgFactor` is 10, namely to use the average of the past 10 frames to fit the polynomial.
 
 #### 5. Describe how (and identify where in your code) you calculated the radius of curvature of the lane and the position of the vehicle with respect to center.
 
-I did this in lines # through # in my code in `my_other_file.py`
+I did this in the function `curvature_and_offset`
 
 #### 6. Provide an example image of your result plotted back down onto the road such that the lane area is identified clearly.
 
-I implemented this step in lines # through # in my code in `yet_another_file.py` in the function `map_lane()`.  Here is an example of my result on a test image:
 
 ![alt text][image6]
 
@@ -112,7 +100,8 @@ I implemented this step in lines # through # in my code in `yet_another_file.py`
 
 #### 1. Provide a link to your final video output.  Your pipeline should perform reasonably well on the entire project video (wobbly lines are ok but no catastrophic failures that would cause the car to drive off the road!).
 
-Here's a [link to my video result](./project_video.mp4)
+Here's a ![link to my video result](video1)
+Here's a ![link to my challenge video result](video2)
 
 ---
 
@@ -120,4 +109,6 @@ Here's a [link to my video result](./project_video.mp4)
 
 #### 1. Briefly discuss any problems / issues you faced in your implementation of this project.  Where will your pipeline likely fail?  What could you do to make it more robust?
 
-Here I'll talk about the approach I took, what techniques I used, what worked and why, where the pipeline might fail and how I might improve it if I were going to pursue this project further.  
+The pipeline can't handle the harder challenge video due to its sharp turns and light conditions. Also the performance of this pipeline is not good, due to poor implementation and optimization.
+
+In the future, I will mostly focus on improving the `checkSanity` function so that it can better predict the fit for current frame. Also I'd like to see if the thresholding method can be improved or not.
